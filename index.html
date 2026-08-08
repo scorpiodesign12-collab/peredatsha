@@ -789,7 +789,11 @@
     <p class="qr-modal-sub">Отсканируйте камерой телефона, чтобы открыть передачу файлов на другом устройстве</p>
 
     <div class="qr-modal-card" id="qr-modal-card">
-<img src="https://raw.githubusercontent.com/scorpiodesign12-collab/vchat-about/main/assets/qr/qr.svg" alt="QR-код сайта" loading="lazy">
+<img id="qr-modal-img" src="https://raw.githubusercontent.com/scorpiodesign12-collab/vchat-about/main/assets/qr/qr.svg" alt="QR-код сайта" loading="lazy" onerror="this.style.display='none'; document.getElementById('qr-modal-fallback').style.display='flex';">
+<div id="qr-modal-fallback" style="display:none; flex-direction:column; align-items:center; gap:10px; color:#83838d; font-size:13px; text-align:center; padding:20px;">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:32px;height:32px;color:#ff2740;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+  <span>QR-код временно недоступен.<br>Проверьте, что файлы загружены на GitHub.</span>
+</div>
     </div>
 
 
