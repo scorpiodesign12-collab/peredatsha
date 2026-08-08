@@ -451,6 +451,50 @@
     padding:6px 0 2px;
   }
 
+  /* ---------- строка отправки ссылки ---------- */
+  .link-row{
+    display:flex;align-items:center;gap:10px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:8px 8px 8px 16px;
+  }
+  .link-row > svg{width:18px;height:18px;color:var(--red);flex-shrink:0;}
+  .link-row input{
+    flex:1;min-width:0;
+    background:transparent;border:none;outline:none;
+    color:var(--text);font-size:13.5px;
+    font-family:inherit;
+  }
+  .link-row input::placeholder{color:var(--muted);}
+  .link-send-btn{
+    width:36px;height:36px;border-radius:50%;flex-shrink:0;
+    background:linear-gradient(135deg,#ff3b52,#c8102e);
+    border:none;display:flex;align-items:center;justify-content:center;
+    color:#fff;cursor:pointer;
+    transition:transform .12s ease;
+  }
+  .link-send-btn svg{width:16px;height:16px;}
+  .link-send-btn:active{transform:scale(.9);}
+
+  /* ---------- кнопки перейти / скопировать для входящей ссылки ---------- */
+  .link-actions{display:flex;gap:8px;flex-shrink:0;}
+  .link-actions a, .link-actions button{
+    width:34px;height:34px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;text-decoration:none;border:none;cursor:pointer;
+    flex-shrink:0;font-family:inherit;
+    transition:transform .12s ease;
+  }
+  .link-actions a:active, .link-actions button:active{transform:scale(.9);}
+  .open-link-btn{background:var(--blue);}
+  .copy-link-btn{background:var(--panel-2);border:1px solid var(--border) !important;color:var(--text);}
+  .link-name{
+    word-break:break-all;
+    white-space:normal !important;
+    font-size:12.5px !important;
+  }
+
   input[type=file]{display:none;}
 </style>
 </head>
@@ -513,6 +557,14 @@
         <div class="status-dot" id="send-status"><i></i><span id="send-status-text">Поиск устройств…</span></div>
       </div>
       <div id="send-peers"></div>
+    </div>
+
+    <div class="link-row">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      <input type="text" id="link-input" placeholder="Вставьте ссылку и отправьте её" inputmode="url">
+      <button class="link-send-btn" id="send-link-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </button>
     </div>
 
     <label class="dropzone" id="dropzone" for="file-input">
@@ -612,6 +664,22 @@ function fileIconSvg(type, name){
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
+const OPEN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>';
+const COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const LINK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#2f7bff"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+
+function escapeHtml(str){
+  return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[ch]));
+}
+
+function normalizeUrl(raw){
+  let url = (raw || '').trim();
+  if (!url) return null;
+  if (!/^[a-z][a-z0-9+.\-]*:\/\//i.test(url)) url = 'https://' + url;
+  return url;
+}
 
 function removeRowAnimated(row){
   if (!row) return;
@@ -670,12 +738,14 @@ async function fetchTransfersByCode(code){
 }
 
 async function deleteTransfer(row){
-  try{
-    await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${row.path}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-    });
-  }catch(e){}
+  if (row.path){
+    try{
+      await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${row.path}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+      });
+    }catch(e){}
+  }
   try{
     await fetch(`${SUPABASE_URL}/rest/v1/transfers?id=eq.${row.id}`, {
       method: 'DELETE',
@@ -854,6 +924,73 @@ dropzone.addEventListener('drop', e => {
   if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
 });
 
+const linkInput = $('#link-input');
+const sendLinkBtn = $('#send-link-btn');
+sendLinkBtn.addEventListener('click', sendLink);
+linkInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); sendLink(); }
+});
+
+async function sendLink(){
+  const url = normalizeUrl(linkInput.value);
+  if (!url) return;
+  linkInput.value = '';
+
+  const id = 'l_' + Math.random().toString(36).slice(2) + Date.now();
+
+  const list = $('#send-list');
+  const row = document.createElement('div');
+  row.className = 'file-row';
+  row.id = 'row-' + id;
+  row.innerHTML = `
+    <div class="file-icon">${LINK_SVG}</div>
+    <div class="file-meta">
+      <div class="name link-name">${escapeHtml(url)}</div>
+      <div class="sub">Ссылка · отправка…</div>
+    </div>
+    <div class="file-side"></div>
+    <div class="row-close" data-remove="${id}">${CLOSE_SVG}</div>
+  `;
+  list.prepend(row);
+
+  activeFiles.set(id, {});
+
+  try{
+    const dbRow = await insertTransferRow({
+      code: currentRoomCode,
+      path: null,
+      name: url,
+      type: 'link',
+      size: 0
+    });
+
+    const entry = activeFiles.get(id);
+    if (!entry){ deleteTransfer(dbRow); return; }
+    entry.dbRow = dbRow;
+    entry.expiresAt = new Date(dbRow.created_at).getTime() + TTL_MS;
+
+    const side = row.querySelector('.file-side');
+    if (side) side.innerHTML = '<span class="done-check">' + CHECK_SVG + '</span>';
+
+    const sub = row.querySelector('.sub');
+    entry.countdownInterval = setInterval(() => {
+      const left = Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+      if (sub) sub.textContent = 'Ссылка · отправлена · исчезнет через ' + left + ' с';
+      if (left <= 0){
+        clearInterval(entry.countdownInterval);
+        activeFiles.delete(id);
+        deleteTransfer(dbRow);
+        if (sub) sub.textContent = 'Ссылка · удалена';
+        if (side) side.innerHTML = '';
+      }
+    }, 1000);
+  }catch(err){
+    const sub = row.querySelector('.sub');
+    if (sub) sub.textContent = 'Ошибка: ' + (err && err.message ? err.message.slice(0, 120) : 'не удалось отправить ссылку');
+    activeFiles.delete(id);
+  }
+}
+
 function handleFiles(fileList){
   const list = $('#send-list');
   [...fileList].forEach(file => {
@@ -870,7 +1007,7 @@ function handleFiles(fileList){
     row.innerHTML = `
       <div class="file-icon">${fileIconSvg(meta.type, meta.name)}</div>
       <div class="file-meta">
-        <div class="name">${meta.name}</div>
+        <div class="name">${escapeHtml(meta.name)}</div>
         <div class="sub">${formatBytes(meta.size)} · загрузка…</div>
         <div class="progress-track"><div class="progress-fill" id="fill-${id}"></div></div>
       </div>
@@ -1058,25 +1195,54 @@ function addIncomingFile(row){
   const rowEl = document.createElement('div');
   rowEl.className = 'file-row';
   rowEl.id = 'row-' + row.id;
-  rowEl.innerHTML = `
-    <div class="file-icon">${fileIconSvg(row.type, row.name)}</div>
-    <div class="file-meta">
-      <div class="name">${row.name}</div>
-      <div class="sub">${formatBytes(row.size)} · готов к скачиванию</div>
-      <div class="progress-track" style="display:none"><div class="progress-fill" id="fill-${row.id}"></div></div>
-    </div>
-    <div class="file-side"><a class="dl-btn" href="javascript:void(0)" id="dl-${row.id}">${DOWNLOAD_SVG}</a></div>
-    <div class="row-close" data-remove-plain="1">${CLOSE_SVG}</div>
-  `;
-  list.prepend(rowEl);
 
-  document.getElementById('dl-' + row.id).addEventListener('click', () => startDownload(row));
+  if (row.type === 'link'){
+    const safeUrl = escapeHtml(row.name);
+    rowEl.innerHTML = `
+      <div class="file-icon">${LINK_SVG}</div>
+      <div class="file-meta">
+        <div class="name link-name">${safeUrl}</div>
+        <div class="sub">Ссылка · получена</div>
+      </div>
+      <div class="file-side link-actions">
+        <a class="open-link-btn" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${OPEN_SVG}</a>
+        <button class="copy-link-btn" type="button" id="copy-${row.id}">${COPY_SVG}</button>
+      </div>
+      <div class="row-close" data-remove-plain="1">${CLOSE_SVG}</div>
+    `;
+    list.prepend(rowEl);
+
+    document.getElementById('copy-' + row.id).addEventListener('click', () => {
+      navigator.clipboard?.writeText(row.name).catch(()=>{});
+      const btn = document.getElementById('copy-' + row.id);
+      const old = btn.innerHTML;
+      btn.innerHTML = CHECK_SVG;
+      setTimeout(() => { if (btn.isConnected) btn.innerHTML = old; }, 1200);
+    });
+  } else {
+    rowEl.innerHTML = `
+      <div class="file-icon">${fileIconSvg(row.type, row.name)}</div>
+      <div class="file-meta">
+        <div class="name">${escapeHtml(row.name)}</div>
+        <div class="sub">${formatBytes(row.size)} · готов к скачиванию</div>
+        <div class="progress-track" style="display:none"><div class="progress-fill" id="fill-${row.id}"></div></div>
+      </div>
+      <div class="file-side"><a class="dl-btn" href="javascript:void(0)" id="dl-${row.id}">${DOWNLOAD_SVG}</a></div>
+      <div class="row-close" data-remove-plain="1">${CLOSE_SVG}</div>
+    `;
+    list.prepend(rowEl);
+    document.getElementById('dl-' + row.id).addEventListener('click', () => startDownload(row));
+  }
 
   const expiresAt = new Date(row.created_at).getTime() + TTL_MS;
   const interval = setInterval(() => {
     const left = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
     const sub = document.querySelector('#row-' + row.id + ' .sub');
-    if (sub && !sub.dataset.downloading) sub.textContent = formatBytes(row.size) + ' · исчезнет через ' + left + ' с';
+    if (sub && !sub.dataset.downloading){
+      sub.textContent = row.type === 'link'
+        ? ('Ссылка · исчезнет через ' + left + ' с')
+        : (formatBytes(row.size) + ' · исчезнет через ' + left + ' с');
+    }
     if (left <= 0){
       clearInterval(interval);
       receiveTimers.delete(row.id);
