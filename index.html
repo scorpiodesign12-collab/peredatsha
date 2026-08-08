@@ -465,7 +465,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H9a4 4 0 0 0-4 4v1"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h12a4 4 0 0 0 4-4v-1"/></svg>
       </div>
       <h1>Передача файлов</h1>
-      <p>Обмен файлами напрямую между устройствами — без загрузки на сервер. До 300&nbsp;МБ за файл.</p>
+      <p>Загрузите файл в облако по коду — получатель скачает его на любом устройстве. Файл хранится 60 секунд. До 300&nbsp;МБ за файл.</p>
     </div>
 
     <div class="action-grid">
@@ -562,12 +562,16 @@
 </div>
 
 <script type="module">
-import { joinRoom } from 'https://esm.run/trystero@0.21.8/supabase';
+import { createClient } from 'https://esm.run/@supabase/supabase-js@2';
 
-const APP_ID = 'nikita-vfiledrop-p2p-app-v1';
 const SUPABASE_URL = 'https://jrzlrskudboasfigflua.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_jP7SxcaQ9lIbOFKFjNq4eQ_pWCcjotP';
+const BUCKET = 'transfers';
 const MAX_SIZE = 300 * 1024 * 1024; // 300 МБ
+const TTL_MS = 60 * 1000; // файл живёт 60 секунд
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const MY_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 /* ---------- утилиты ---------- */
 const $ = sel => document.querySelector(sel);
@@ -609,28 +613,97 @@ const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const DOWNLOAD_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
 
-/* ---------- удаление карточек файлов по крестику ---------- */
 function removeRowAnimated(row){
   if (!row) return;
   row.classList.add('row-out');
   setTimeout(() => row.remove(), 220);
 }
 
-document.addEventListener('click', e => {
-  const btn = e.target.closest('.row-close');
-  if (!btn) return;
-  const row = btn.closest('.file-row');
-  const id = btn.getAttribute('data-remove');
-  if (id) pendingFiles = pendingFiles.filter(p => p.meta.id !== id);
-  removeRowAnimated(row);
+/* ================= SUPABASE STORAGE / DB HELPERS ================= */
 
-  // если это была последняя карточка входящих — вернуть плейсхолдер
-  setTimeout(() => {
-    if ($('#recv-incoming') && !$('#recv-incoming').children.length && $('#recv-placeholder')){
-      $('#recv-placeholder').style.display = 'block';
-    }
-  }, 240);
-});
+function sanitizeName(name){
+  return (name || 'file').replace(/[^\w.\-]+/g, '_');
+}
+
+function uploadFile(path, file, onProgress){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`);
+    xhr.setRequestHeader('apikey', SUPABASE_KEY);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + SUPABASE_KEY);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('x-upsert', 'true');
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error('upload ' + xhr.status + ': ' + xhr.responseText));
+    };
+    xhr.onerror = () => reject(new Error('network error while uploading'));
+    xhr.send(file);
+  });
+}
+
+async function insertTransferRow({ code, path, name, type, size }){
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify([{ code, path, name, type, size, sender: MY_ID }])
+  });
+  if (!res.ok) throw new Error('db insert failed: ' + res.status);
+  const rows = await res.json();
+  return rows[0];
+}
+
+async function fetchTransfersByCode(code){
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/transfers?code=eq.${code}&order=created_at.asc`, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  });
+  if (!res.ok) throw new Error('db query failed: ' + res.status);
+  return res.json();
+}
+
+async function deleteTransfer(row){
+  try{
+    await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${row.path}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+  }catch(e){}
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/transfers?id=eq.${row.id}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+  }catch(e){}
+}
+
+function publicUrl(path){
+  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`;
+}
+
+async function downloadWithProgress(url, onProgress){
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('download failed: ' + res.status);
+  const total = Number(res.headers.get('Content-Length')) || 0;
+  const reader = res.body.getReader();
+  let received = 0;
+  const chunks = [];
+  while(true){
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (total) onProgress(received / total);
+  }
+  return new Blob(chunks);
+}
 
 /* ---------- навигация по экранам ---------- */
 function showScreen(id){
@@ -647,20 +720,42 @@ function goHome(){
   showScreen('screen-home');
 }
 
-/* ---------- общее состояние комнаты ---------- */
-let currentRoom = null;
-let currentPeers = new Map(); // id -> label
-let sendAction = null, getFileAction = null, onProgress = null;
-let pendingFiles = [];
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.row-close');
+  if (!btn) return;
+  const row = btn.closest('.file-row');
+  const id = btn.getAttribute('data-remove');
+  if (id) cancelUpload(id);
+  removeRowAnimated(row);
+  setTimeout(() => {
+    if ($('#recv-incoming') && !$('#recv-incoming').children.length && $('#recv-placeholder')){
+      $('#recv-placeholder').style.display = 'block';
+    }
+  }, 240);
+});
+
+/* ---------- общее состояние ---------- */
+let currentChannel = null;
+let currentPeers = new Map();
+let activeFiles = new Map();   // id -> { row info, timer, countdownInterval }
+let receiveTimers = new Map(); // id -> countdownInterval
+let currentRoomCode = null;
+let currentRole = null; // 'send' | 'receive'
 
 function leaveCurrentRoom(){
-  if (currentRoom){
-    try{ currentRoom.leave(); }catch(e){}
+  if (currentChannel){
+    try{ supabase.removeChannel(currentChannel); }catch(e){}
   }
-  currentRoom = null;
+  currentChannel = null;
   currentPeers = new Map();
-  sendAction = null; getFileAction = null; onProgress = null;
-  pendingFiles = [];
+  currentRoomCode = null;
+  currentRole = null;
+
+  activeFiles.forEach(f => { if (f.countdownInterval) clearInterval(f.countdownInterval); });
+  activeFiles = new Map();
+  receiveTimers.forEach(t => clearInterval(t));
+  receiveTimers = new Map();
+
   $('#send-list').innerHTML = '';
   $('#recv-incoming').innerHTML = '';
   $('#recv-done').innerHTML = '';
@@ -674,7 +769,7 @@ function peerLabel(id){
   return id.slice(0, 2).toUpperCase();
 }
 
-function renderPeers(containerSel, statusDotSel, statusTextSel, emptyText){
+function renderPeers(containerSel, statusDotSel, statusTextSel, emptyText, connectedText){
   const box = $(containerSel);
   if (currentPeers.size === 0){
     box.innerHTML = `<div class="empty-hint"><span class="radar"></span>${emptyText}</div>`;
@@ -682,37 +777,52 @@ function renderPeers(containerSel, statusDotSel, statusTextSel, emptyText){
     $(statusTextSel).textContent = emptyText;
   } else {
     box.innerHTML = '<div class="peers">' +
-      [...currentPeers.entries()].map(([id]) =>
+      [...currentPeers.keys()].map(id =>
         `<div class="peer-chip"><span class="peer-avatar">${peerLabel(id)}</span>Устройство ${peerLabel(id)}</div>`
       ).join('') + '</div>';
     $(statusDotSel).classList.add('live');
-    $(statusTextSel).textContent = currentPeers.size + ' устройство подключено';
+    $(statusTextSel).textContent = connectedText || (currentPeers.size + ' устройство подключено');
   }
+}
+
+/* ================= КОМНАТА (Supabase Realtime Presence) ================= */
+function setupRoomChannel(code, role, { onOtherJoin, onOtherLeave, onSync } = {}){
+  const channel = supabase.channel('room:' + code, {
+    config: { presence: { key: MY_ID } }
+  });
+
+  channel.on('presence', { event: 'sync' }, () => {
+    const state = channel.presenceState();
+    currentPeers = new Map();
+    Object.keys(state).forEach(key => {
+      if (key === MY_ID) return;
+      const meta = state[key][0];
+      if (meta && meta.role !== role) currentPeers.set(key, meta);
+    });
+    if (onSync) onSync();
+  });
+
+  channel.subscribe(async status => {
+    if (status === 'SUBSCRIBED'){
+      await channel.track({ role, joined_at: Date.now() });
+    }
+  });
+
+  return channel;
 }
 
 /* ================= ОТПРАВКА ================= */
 function startSendFlow(){
   leaveCurrentRoom();
   const code = genCode();
+  currentRoomCode = code;
+  currentRole = 'send';
   $('#send-code').innerHTML = code.split('').map(d => `<div class="d">${d}</div>`).join('');
   showScreen('screen-send');
-  renderPeers('#send-peers', '#send-status', '#send-status-text', 'Поиск устройств…');
+  renderPeers('#send-peers', '#send-status', '#send-status-text', 'Ожидание получателя…', 'Получатель на связи');
 
-  currentRoom = joinRoom({ appId: SUPABASE_URL, supabaseKey: SUPABASE_KEY }, code);
-  [sendAction, getFileAction, onProgress] = currentRoom.makeAction('file');
-
-  currentRoom.onPeerJoin(id => {
-    currentPeers.set(id, true);
-    renderPeers('#send-peers', '#send-status', '#send-status-text', 'Поиск устройств…');
-    flushPendingFiles();
-  });
-  currentRoom.onPeerLeave(id => {
-    currentPeers.delete(id);
-    renderPeers('#send-peers', '#send-status', '#send-status-text', 'Поиск устройств…');
-  });
-
-  onProgress((percent, peerId, metadata) => {
-    updateRow('#send-list', metadata, percent);
+  currentChannel = setupRoomChannel(code, 'sender', {
+    onSync: () => renderPeers('#send-peers', '#send-status', '#send-status-text', 'Ожидание получателя…', 'Получатель на связи')
   });
 }
 
@@ -756,7 +866,7 @@ function handleFiles(fileList){
       <div class="file-icon">${fileIconSvg(meta.type, meta.name)}</div>
       <div class="file-meta">
         <div class="name">${meta.name}</div>
-        <div class="sub">${formatBytes(meta.size)} · ожидание устройства</div>
+        <div class="sub">${formatBytes(meta.size)} · загрузка…</div>
         <div class="progress-track"><div class="progress-fill" id="fill-${id}"></div></div>
       </div>
       <div class="file-side"><span class="pct" id="pct-${id}">0%</span></div>
@@ -764,64 +874,82 @@ function handleFiles(fileList){
     `;
     list.prepend(row);
 
-    pendingFiles.push({ file, meta });
+    startUpload(file, meta);
   });
   fileInput.value = '';
-  flushPendingFiles();
 }
 
-async function flushPendingFiles(){
-  if (currentPeers.size === 0) return;
-  const queue = pendingFiles.splice(0, pendingFiles.length);
-  for (const { file, meta } of queue){
-    const sub = document.querySelector('#row-' + meta.id + ' .sub');
-    if (sub) sub.textContent = formatBytes(meta.size) + ' · отправка…';
-    try{
-      const buffer = await file.arrayBuffer();
-      await sendAction(buffer, null, meta, (percent) => {
-        updateRow('#send-list', meta, percent);
-      });
-      updateRow('#send-list', meta, 1, true);
-    }catch(err){
-      const sub2 = document.querySelector('#row-' + meta.id + ' .sub');
-      if (sub2) sub2.textContent = 'Ошибка отправки';
+function cancelUpload(id){
+  const entry = activeFiles.get(id);
+  if (entry){
+    if (entry.countdownInterval) clearInterval(entry.countdownInterval);
+    if (entry.dbRow) deleteTransfer(entry.dbRow);
+    activeFiles.delete(id);
+  }
+}
+
+async function startUpload(file, meta){
+  const path = `${currentRoomCode}/${meta.id}-${sanitizeName(meta.name)}`;
+  activeFiles.set(meta.id, { meta, path });
+
+  try{
+    await uploadFile(path, file, percent => updateSendRow(meta, percent));
+    updateSendRow(meta, 1);
+
+    const dbRow = await insertTransferRow({
+      code: currentRoomCode,
+      path,
+      name: meta.name,
+      type: meta.type,
+      size: meta.size
+    });
+
+    const entry = activeFiles.get(meta.id);
+    if (!entry) { // строку успели удалить пока грузилось
+      deleteTransfer(dbRow);
+      return;
     }
+    entry.dbRow = dbRow;
+    entry.expiresAt = new Date(dbRow.created_at).getTime() + TTL_MS;
+
+    markSendRowUploaded(meta);
+    entry.countdownInterval = setInterval(() => {
+      const left = Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+      const sub = document.querySelector('#row-' + meta.id + ' .sub');
+      if (sub) sub.textContent = formatBytes(meta.size) + ' · отправлено · исчезнет через ' + left + ' с';
+      if (left <= 0){
+        clearInterval(entry.countdownInterval);
+        activeFiles.delete(meta.id);
+        deleteTransfer(dbRow);
+        const row = document.getElementById('row-' + meta.id);
+        if (row){
+          const sub2 = row.querySelector('.sub');
+          if (sub2) sub2.textContent = formatBytes(meta.size) + ' · файл удалён';
+          const side = row.querySelector('.file-side');
+          if (side) side.innerHTML = '';
+        }
+      }
+    }, 1000);
+  }catch(err){
+    const sub = document.querySelector('#row-' + meta.id + ' .sub');
+    if (sub) sub.textContent = 'Ошибка загрузки — проверьте подключение';
+    activeFiles.delete(meta.id);
   }
 }
 
-function updateRow(listSel, meta, percent, forceDone){
-  let row = document.getElementById('row-' + meta.id);
-  if (!row){
-    // строка для входящего файла на стороне получателя — создаём при первом прогрессе
-    const list = $(listSel);
-    row = document.createElement('div');
-    row.className = 'file-row';
-    row.id = 'row-' + meta.id;
-    row.innerHTML = `
-      <div class="file-icon">${fileIconSvg(meta.type, meta.name)}</div>
-      <div class="file-meta">
-        <div class="name">${meta.name}</div>
-        <div class="sub">${formatBytes(meta.size)} · получение…</div>
-        <div class="progress-track"><div class="progress-fill" id="fill-${meta.id}"></div></div>
-      </div>
-      <div class="file-side"><span class="pct" id="pct-${meta.id}">0%</span></div>
-      <div class="row-close" data-remove="${meta.id}">${CLOSE_SVG}</div>
-    `;
-    list.prepend(row);
-    $('#recv-placeholder').style.display = 'none';
-  }
+function updateSendRow(meta, percent){
   const pct = Math.round((percent || 0) * 100);
   const fill = document.getElementById('fill-' + meta.id);
   const pctEl = document.getElementById('pct-' + meta.id);
   if (fill) fill.style.width = pct + '%';
   if (pctEl) pctEl.textContent = pct + '%';
+}
 
-  if (forceDone || pct >= 100){
-    const side = row.querySelector('.file-side');
-    if (side) side.innerHTML = '<span class="done-check">' + CHECK_SVG + '</span>';
-    const sub = row.querySelector('.sub');
-    if (sub) sub.textContent = formatBytes(meta.size) + ' · отправлено';
-  }
+function markSendRowUploaded(meta){
+  const row = document.getElementById('row-' + meta.id);
+  if (!row) return;
+  const side = row.querySelector('.file-side');
+  if (side) side.innerHTML = '<span class="done-check">' + CHECK_SVG + '</span>';
 }
 
 /* ================= ПОЛУЧЕНИЕ ================= */
@@ -871,33 +999,110 @@ function checkCodeComplete(inputs){
   $('#join-btn').disabled = val.length !== 6;
 }
 
-function joinRoomByCode(code){
+async function joinRoomByCode(code){
+  $('#join-btn').disabled = true;
+  $('#join-btn').textContent = 'Подключение…';
+
+  currentRoomCode = code;
+  currentRole = 'receive';
+
   $('#receive-entry').style.display = 'none';
   $('#receive-connected').style.display = 'flex';
-  renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Подключение к комнате…');
+  renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Поиск отправителя…', 'Отправитель на связи');
 
-  currentRoom = joinRoom({ appId: SUPABASE_URL, supabaseKey: SUPABASE_KEY }, code);
-  [sendAction, getFileAction, onProgress] = currentRoom.makeAction('file');
-
-  currentRoom.onPeerJoin(id => {
-    currentPeers.set(id, true);
-    renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Поиск отправителя…');
-  });
-  currentRoom.onPeerLeave(id => {
-    currentPeers.delete(id);
-    renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Поиск отправителя…');
+  currentChannel = setupRoomChannel(code, 'receiver', {
+    onSync: () => renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Поиск отправителя…', 'Отправитель на связи')
   });
 
-  onProgress((percent, peerId, metadata) => {
-    updateRow('#recv-incoming', metadata, percent);
-  });
+  currentChannel
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transfers', filter: `code=eq.${code}` }, payload => {
+      addIncomingFile(payload.new);
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'transfers' }, payload => {
+      removeIncomingFile(payload.old.id);
+    });
 
-  getFileAction((data, peerId, metadata) => {
-    // передача завершена — удаляем строку прогресса и показываем готовый файл
-    const row = document.getElementById('row-' + metadata.id);
-    if (row) row.remove();
+  try{
+    const rows = await fetchTransfersByCode(code);
+    const now = Date.now();
+    let foundAny = false;
+    for (const row of rows){
+      const expiresAt = new Date(row.created_at).getTime() + TTL_MS;
+      if (expiresAt <= now){
+        deleteTransfer(row); // просрочен — подчистим
+        continue;
+      }
+      addIncomingFile(row);
+      foundAny = true;
+    }
+    if (!foundAny && rows.length === 0){
+      // код может быть верным, но отправитель ещё не начал загрузку — просто ждём
+    }
+  }catch(err){
+    alert('Не удалось найти комнату. Проверьте код и подключение к интернету.');
+  }
+}
 
-    const blob = new Blob([data], { type: metadata.type || 'application/octet-stream' });
+function addIncomingFile(row){
+  if (document.getElementById('row-' + row.id)) return; // уже отображён
+  $('#recv-placeholder').style.display = 'none';
+
+  const list = $('#recv-incoming');
+  const rowEl = document.createElement('div');
+  rowEl.className = 'file-row';
+  rowEl.id = 'row-' + row.id;
+  rowEl.innerHTML = `
+    <div class="file-icon">${fileIconSvg(row.type, row.name)}</div>
+    <div class="file-meta">
+      <div class="name">${row.name}</div>
+      <div class="sub">${formatBytes(row.size)} · готов к скачиванию</div>
+      <div class="progress-track" style="display:none"><div class="progress-fill" id="fill-${row.id}"></div></div>
+    </div>
+    <div class="file-side"><a class="dl-btn" href="javascript:void(0)" id="dl-${row.id}">${DOWNLOAD_SVG}</a></div>
+    <div class="row-close" data-remove-plain="1">${CLOSE_SVG}</div>
+  `;
+  list.prepend(rowEl);
+
+  document.getElementById('dl-' + row.id).addEventListener('click', () => startDownload(row));
+
+  const expiresAt = new Date(row.created_at).getTime() + TTL_MS;
+  const interval = setInterval(() => {
+    const left = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    const sub = document.querySelector('#row-' + row.id + ' .sub');
+    if (sub && !sub.dataset.downloading) sub.textContent = formatBytes(row.size) + ' · исчезнет через ' + left + ' с';
+    if (left <= 0){
+      clearInterval(interval);
+      receiveTimers.delete(row.id);
+      removeIncomingFile(row.id);
+    }
+  }, 1000);
+  receiveTimers.set(row.id, interval);
+}
+
+function removeIncomingFile(id){
+  const t = receiveTimers.get(id);
+  if (t) clearInterval(t);
+  receiveTimers.delete(id);
+  const row = document.getElementById('row-' + id);
+  if (row) removeRowAnimated(row);
+  setTimeout(() => {
+    if (!$('#recv-incoming').children.length) $('#recv-placeholder').style.display = 'block';
+  }, 240);
+}
+
+async function startDownload(row){
+  const sub = document.querySelector('#row-' + row.id + ' .sub');
+  const track = document.querySelector('#row-' + row.id + ' .progress-track');
+  const fill = document.getElementById('fill-' + row.id);
+  if (sub) { sub.dataset.downloading = '1'; sub.textContent = formatBytes(row.size) + ' · скачивание… 0%'; }
+  if (track) track.style.display = 'block';
+
+  try{
+    const blob = await downloadWithProgress(publicUrl(row.path), percent => {
+      const pct = Math.round(percent * 100);
+      if (fill) fill.style.width = pct + '%';
+      if (sub) sub.textContent = formatBytes(row.size) + ' · скачивание… ' + pct + '%';
+    });
     const url = URL.createObjectURL(blob);
 
     const doneWrap = $('#recv-done-wrap');
@@ -906,18 +1111,25 @@ function joinRoomByCode(code){
     const card = document.createElement('div');
     card.className = 'file-row';
     card.innerHTML = `
-      <div class="file-icon">${fileIconSvg(metadata.type, metadata.name)}</div>
+      <div class="file-icon">${fileIconSvg(row.type, row.name)}</div>
       <div class="file-meta">
-        <div class="name">${metadata.name}</div>
-        <div class="sub">${formatBytes(metadata.size)} · получено</div>
+        <div class="name">${row.name}</div>
+        <div class="sub">${formatBytes(row.size)} · получено</div>
       </div>
-      <a class="dl-btn" href="${url}" download="${metadata.name}">${DOWNLOAD_SVG}</a>
+      <a class="dl-btn" href="${url}" download="${row.name}">${DOWNLOAD_SVG}</a>
       <div class="row-close" data-remove-plain="1">${CLOSE_SVG}</div>
     `;
     done.prepend(card);
 
-    if (!$('#recv-incoming').children.length) $('#recv-placeholder').style.display = 'block';
-  });
+    // автозапуск сохранения
+    const a = document.createElement('a');
+    a.href = url; a.download = row.name;
+    document.body.appendChild(a); a.click(); a.remove();
+
+    removeIncomingFile(row.id);
+  }catch(err){
+    if (sub) { sub.textContent = 'Ошибка скачивания — файл мог истечь'; delete sub.dataset.downloading; }
+  }
 }
 </script>
 </body>
