@@ -562,9 +562,11 @@
 </div>
 
 <script type="module">
-import { joinRoom } from 'https://esm.run/trystero@0.21.8/torrent';
+import { joinRoom } from 'https://esm.run/trystero@0.21.8/supabase';
 
 const APP_ID = 'nikita-vfiledrop-p2p-app-v1';
+const SUPABASE_URL = 'https://jrzlrskudboasfigflua.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_jP7SxcaQ9lIbOFKFjNq4eQ_pWCcjotP';
 const MAX_SIZE = 300 * 1024 * 1024; // 300 МБ
 
 /* ---------- утилиты ---------- */
@@ -696,7 +698,7 @@ function startSendFlow(){
   showScreen('screen-send');
   renderPeers('#send-peers', '#send-status', '#send-status-text', 'Поиск устройств…');
 
-  currentRoom = joinRoom({ appId: APP_ID }, code);
+  currentRoom = joinRoom({ appId: SUPABASE_URL, supabaseKey: SUPABASE_KEY }, code);
   [sendAction, getFileAction, onProgress] = currentRoom.makeAction('file');
 
   currentRoom.onPeerJoin(id => {
@@ -874,7 +876,7 @@ function joinRoomByCode(code){
   $('#receive-connected').style.display = 'flex';
   renderPeers('#recv-peers', '#recv-status', '#recv-status-text', 'Подключение к комнате…');
 
-  currentRoom = joinRoom({ appId: APP_ID }, code);
+  currentRoom = joinRoom({ appId: SUPABASE_URL, supabaseKey: SUPABASE_KEY }, code);
   [sendAction, getFileAction, onProgress] = currentRoom.makeAction('file');
 
   currentRoom.onPeerJoin(id => {
