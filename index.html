@@ -454,10 +454,15 @@
   /* ---------- строка отправки ссылки ---------- */
   .link-row{
     display:flex;align-items:center;gap:10px;
-    background:var(--panel);
-    border:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(255,39,64,.05), transparent);
+    border:1.5px dashed rgba(255,39,64,.4);
     border-radius:16px;
     padding:8px 8px 8px 16px;
+    transition:border-color .15s, background .15s;
+  }
+  .link-row:focus-within{
+    border-color:var(--red);
+    background:rgba(255,39,64,.08);
   }
   .link-row > svg{width:18px;height:18px;color:var(--red);flex-shrink:0;}
   .link-row input{
@@ -510,7 +515,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H9a4 4 0 0 0-4 4v1"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h12a4 4 0 0 0 4-4v-1"/></svg>
       </div>
       <h1>Передача файлов</h1>
-      <p>Загрузите файл в облако по коду — получатель скачает его на любом устройстве. Файл хранится 60 секунд. До 300&nbsp;МБ за файл.</p>
+      <p>Отправь любой файл до 300&nbsp;МБ и скачай на любом устройстве — быстро, просто, без регистрации.</p>
     </div>
 
     <div class="action-grid">
